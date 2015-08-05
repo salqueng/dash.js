@@ -10364,12 +10364,13 @@ MediaPlayer.models.URIQueryAndFragmentModel.prototype = {
 
 MediaPlayer.models.VideoModel = function() {
     "use strict";
-    var element, stalledStreams = [], isStalled = function() {
+    var element, stalledStreams = [], playbackRateBeforeStalled = 1, isStalled = function() {
         return stalledStreams.length > 0;
     }, addStalledStream = function(type) {
         if (type === null || element.seeking) {
             return;
         }
+        playbackRateBeforeStalled = this.getPlaybackRate();
         this.setPlaybackRate(0);
         if (stalledStreams[type] === true) {
             return;
@@ -10386,7 +10387,7 @@ MediaPlayer.models.VideoModel = function() {
             stalledStreams.splice(index, 1);
         }
         if (isStalled() === false) {
-            this.setPlaybackRate(1);
+            this.setPlaybackRate(playbackRateBeforeStalled);
         }
     }, stallStream = function(type, isStalled) {
         if (isStalled) {
