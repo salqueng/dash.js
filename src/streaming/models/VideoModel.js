@@ -33,6 +33,7 @@ MediaPlayer.models.VideoModel = function () {
 
     var element,
         stalledStreams = [],
+        playbackRateBeforeStalled = 1,
         //_currentTime = 0,
 
         isStalled = function () {
@@ -45,6 +46,8 @@ MediaPlayer.models.VideoModel = function () {
             }
 
             // Halt playback until nothing is stalled.
+
+            playbackRateBeforeStalled = this.getPlaybackRate();
             this.setPlaybackRate(0);
 
             if (stalledStreams[type] === true) {
@@ -68,7 +71,7 @@ MediaPlayer.models.VideoModel = function () {
 
             // If nothing is stalled resume playback.
             if (isStalled() === false) {
-                this.setPlaybackRate(1);
+                this.setPlaybackRate(playbackRateBeforeStalled);
             }
         },
 
