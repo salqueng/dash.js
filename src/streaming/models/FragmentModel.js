@@ -132,6 +132,7 @@ MediaPlayer.dependencies.FragmentModel = function () {
                 range = request.range;
 
             this.metricsModel.addSchedulingInfo(mediaType, now, type, startTime, availabilityStartTime, duration, quality, range, state);
+            this.metricsModel.addRequestsQueue(mediaType, pendingRequests, loadingRequests, executedRequests, rejectedRequests);
         },
 
         onLoadingCompleted = function(e) {
@@ -150,7 +151,7 @@ MediaPlayer.dependencies.FragmentModel = function () {
         },
 
         onBytesRejected = function(e) {
-            var req = this.getRequests({state: MediaPlayer.dependencies.FragmentModel.states.EXECUTED, quality: e.data.quality, index: e.data.index})[0];
+            var req = this.getRequests({state: MediaPlayer.dependencies.FragmentModel.states.EXECUTED, quality: e.data.quality, time: e.data.start})[0];
             // if request for an unappropriate quality has not been removed yet, do it now
             if (req) {
                 removeRequest.call(this, executedRequests, req);
@@ -179,6 +180,7 @@ MediaPlayer.dependencies.FragmentModel = function () {
         notify: undefined,
         subscribe: undefined,
         unsubscribe: undefined,
+        manifestExt:undefined,
 
         setup: function() {
             this[MediaPlayer.dependencies.BufferController.eventList.ENAME_BUFFER_LEVEL_OUTRUN] = onBufferLevelOutrun;
@@ -204,7 +206,8 @@ MediaPlayer.dependencies.FragmentModel = function () {
         },
 
         addRequest: function(value) {
-            if (!value || this.isFragmentLoadedOrPending(value)) return false;
+
+            if (!this.manifestExt.getIsTextTrack(value.mediaType) && (!value || this.isFragmentLoadedOrPending(value))) return false;
 
             pendingRequests.push(value);
             addSchedulingInfoMetrics.call(this, value, MediaPlayer.dependencies.FragmentModel.states.PENDING);

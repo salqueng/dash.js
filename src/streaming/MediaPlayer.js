@@ -68,6 +68,7 @@ MediaPlayer = function (context) {
         numOfParallelRequestAllowed = 0,
         system,
         abrController,
+        mediaController,
         element,
         source,
         protectionController = null,
@@ -78,6 +79,7 @@ MediaPlayer = function (context) {
         metricsExt,
         metricsModel,
         videoModel,
+        textSourceBuffer,
         DOMStorage,
         initialized = false,
         resetting = false,
@@ -166,25 +168,36 @@ MediaPlayer = function (context) {
         },
 
         seek = function(value) {
-            this.getVideoModel().getElement().currentTime = this.getDVRSeekOffset(value);
+            var s = playbackController.getIsDynamic() ? this.getDVRSeekOffset(value) : value;
+            this.getVideoModel().setCurrentTime(s);
         },
 
         time = function () {
-            var metric = getDVRInfoMetric.call(this);
-            return (metric === null) ? 0 : this.duration() - (metric.range.end - metric.time);
+            var t = videoModel.getCurrentTime();
+
+            if (playbackController.getIsDynamic()) {
+                var metric = getDVRInfoMetric.call(this);
+                t = (metric === null) ? 0 : this.duration() - (metric.range.end - metric.time);
+            }
+            return t;
         },
 
         duration  = function () {
-            var metric = getDVRInfoMetric.call(this),
-                range;
+            var d = videoModel.getElement().duration;
 
-            if (metric === null) {
-                return 0;
+            if (playbackController.getIsDynamic()) {
+
+                var metric = getDVRInfoMetric.call(this),
+                    range;
+
+                if (metric === null) {
+                    return 0;
+                }
+
+                range = metric.range.end - metric.range.start;
+                d = range < metric.manifestInfo.DVRWindowSize ? range : metric.manifestInfo.DVRWindowSize;
             }
-
-            range = metric.range.end - metric.range.start;
-
-            return range < metric.manifestInfo.DVRWindowSize ? range : metric.manifestInfo.DVRWindowSize;
+            return d;
         },
 
         getAsUTC = function(valToConvert) {
@@ -237,7 +250,14 @@ MediaPlayer = function (context) {
             }
         },
 
+        getActiveStream = function() {
+            var streamInfo = streamController.getActiveStreamInfo();
+
+            return streamInfo ? streamController.getStreamById(streamInfo.id) : null;
+        },
+
         resetAndPlay = function() {
+            this.adapter.reset();
             if (playing && streamController) {
                 if (!resetting) {
                     resetting = true;
@@ -254,6 +274,7 @@ MediaPlayer = function (context) {
                         abrController.reset();
                         rulesController.reset();
                         playbackController.reset();
+                        mediaController.reset();
                         streamController = null;
                         playing = false;
 
@@ -322,7 +343,9 @@ MediaPlayer = function (context) {
             metricsModel = system.getObject("metricsModel");
             DOMStorage = system.getObject("DOMStorage");
             playbackController = system.getObject("playbackController");
+            mediaController = system.getObject("mediaController");
             this.restoreDefaultUTCTimingSources();
+            this.debug.log("[dash.js "+ VERSION +"] " + "new MediaPlayer instance has been created");
         },
 
         /**
@@ -436,6 +459,23 @@ MediaPlayer = function (context) {
          */
         enableLastBitrateCaching: function (enable, ttl) {
             DOMStorage.enableLastBitrateCaching(enable, ttl);
+        },
+
+        /**
+         * Set to false if you would like to disable the last known lang for audio (or camera angle for video) from being stored during playback and used
+         * to set the initial settings for subsequent playback within the expiration window.
+         *
+         * The default expiration is one hour, defined in milliseconds. If expired, the default settings will be used
+         * for that session and a new settings will be stored during that session.
+         *
+         * @param enable - Boolean - Will toggle if feature is enabled. True to enable, False to disable.
+         * @param ttl Number - (Optional) A value defined in milliseconds representing how long to cache the settings for. Time to live.
+         * @default enable = True, ttl = 360000 (1 hour)
+         * @memberof MediaPlayer#
+         *
+         */
+        enableLastMediaSettingsCaching: function (enable, ttl) {
+            DOMStorage.enableLastMediaSettingsCaching(enable, ttl);
         },
 
         /**
@@ -562,6 +602,8 @@ MediaPlayer = function (context) {
         },
 
         /**
+         * Sets the current quality for media type instead of letting the ABR Herstics automatically selecting it..
+         *
          * @param type
          * @param value
          * @memberof MediaPlayer#
@@ -570,16 +612,48 @@ MediaPlayer = function (context) {
             abrController.setPlaybackQuality(type, streamController.getActiveStreamInfo(), value);
         },
 
+
+        /**
+         * Use this method to change the current text track for both external time text files and fragmented text tracks. There is no need to
+         * set the track mode on the video object to switch a track when using this method.
+         *
+         * @param idx - Index of track based on the order of the order the tracks are added Use -1 to disable all tracks. (turn captions off).  Use MediaPlayer#MediaPlayer.events.TEXT_TRACK_ADDED.
+         * @see {@link MediaPlayer#MediaPlayer.events.TEXT_TRACK_ADDED}
+         * @memberof MediaPlayer#
+         */
+        setTextTrack: function (idx) {
+            //For external time text file,  the only action needed to change a track is marking the track mode to showing.
+            // Fragmented text tracks need the additional step of calling textSourceBuffer.setTextTrack();
+            if (textSourceBuffer === undefined){
+                textSourceBuffer = system.getObject("textSourceBuffer");
+            }
+
+            var tracks = element.textTracks,
+                ln = tracks.length;
+
+            for(var i=0; i < ln; i++ ){
+                var track = tracks[i],
+                    mode = idx === i ? "showing" : "hidden";
+
+                if (track.mode !== mode){ //checking that mode is not already set by 3rd Party player frameworks that set mode to prevent event retrigger.
+                    track.mode = mode;
+                }
+            }
+
+            if (textSourceBuffer.isFragmented) {
+                textSourceBuffer.setTextTrack();
+            }
+        },
+
         /**
          * @param type
          * @returns {Array}
          * @memberof MediaPlayer#
          */
         getBitrateInfoListFor: function(type) {
-            var streamInfo = streamController.getActiveStreamInfo(),
-                stream = streamController.getStreamById(streamInfo.id);
+            var stream = getActiveStream.call(this);
 
-            return stream.getBitrateListFor(type);
+            return stream ? stream.getBitrateListFor(type) : [];
         },
 
         /**
@@ -598,6 +672,154 @@ MediaPlayer = function (context) {
          */
         getInitialBitrateFor: function(type) {
             return abrController.getInitialBitrateFor(type);
+        },
+
+        /**
+         * This method returns the list of all available streams from a given manifest
+         * @param manifest
+         * @returns {Array} list of {@link MediaPlayer.vo.StreamInfo}
+         * @memberof MediaPlayer#
+         */
+        getStreamsFromManifest: function(manifest) {
+            return this.adapter.getStreamsInfo(manifest);
+        },
+
+        /**
+         * This method returns the list of all available tracks for a given media type
+         * @param type
+         * @returns {Array} list of {@link MediaPlayer.vo.MediaInfo}
+         * @memberof MediaPlayer#
+         */
+        getTracksFor: function(type) {
+            var streamInfo = streamController ? streamController.getActiveStreamInfo() : null;
+
+            if (!streamInfo) return [];
+
+            return mediaController.getTracksFor(type, streamInfo);
+        },
+
+        /**
+         * This method returns the list of all available tracks for a given media type and streamInfo from a given manifest
+         * @param type
+         * @param manifest
+         * @param streamInfo
+         * @returns {Array} list of {@link MediaPlayer.vo.MediaInfo}
+         * @memberof MediaPlayer#
+         */
+        getTracksForTypeFromManifest: function(type, manifest, streamInfo) {
+            streamInfo = streamInfo || this.adapter.getStreamsInfo(manifest)[0];
+
+            return streamInfo ? this.adapter.getAllMediaInfoForType(manifest, streamInfo, type) : [];
+        },
+
+        /**
+         * @param type
+         * @returns {Object} {@link MediaPlayer.vo.MediaInfo}
+         * @memberof MediaPlayer#
+         */
+        getCurrentTrackFor: function(type) {
+            var streamInfo = streamController ? streamController.getActiveStreamInfo() : null;
+
+            if (!streamInfo) return null;
+
+            return mediaController.getCurrentTrackFor(type, streamInfo);
+        },
+
+        /**
+         * This method allows to set media settings that will be used to pick the initial track. Format of the settings
+         * is following:
+         * {lang: langValue,
+         *  viewpoint: viewpointValue,
+         *  audioChannelConfiguration: audioChannelConfigurationValue,
+         *  accessibility: accessibilityValue,
+         *  role: roleValue}
+         *
+         *
+         * @param type
+         * @param value {Object}
+         * @memberof MediaPlayer#
+         */
+        setInitialMediaSettingsFor: function(type, value) {
+            mediaController.setInitialSettings(type, value);
+        },
+
+        /**
+         * This method returns media settings that is used to pick the initial track. Format of the settings
+         * is following:
+         * {lang: langValue,
+         *  viewpoint: viewpointValue,
+         *  audioChannelConfiguration: audioChannelConfigurationValue,
+         *  accessibility: accessibilityValue,
+         *  role: roleValue}
+         * @param type
+         * @returns {Object}
+         * @memberof MediaPlayer#
+         */
+        getInitialMediaSettingsFor: function(type) {
+            return mediaController.getInitialSettings(type);
+        },
+
+        /**
+         * @param track instance of {@link MediaPlayer.vo.MediaInfo}
+         * @memberof MediaPlayer#
+         */
+        setCurrentTrack: function(track) {
+            mediaController.setTrack(track);
+        },
+
+        /**
+         * This method returns the current track switch mode.
+         *
+         * @param type
+         * @returns mode
+         * @memberof MediaPlayer#
+         */
+        getTrackSwitchModeFor: function(type) {
+            return mediaController.getSwitchMode(type);
+        },
+
+        /**
+         * This method sets the current track switch mode. Available options are:
+         *
+         * MediaPlayer.dependencies.MediaController.trackSwitchModes.NEVER_REPLACE
+         * (used to forbid clearing the buffered data (prior to current playback position) after track switch. Default for video)
+         *
+         * MediaPlayer.dependencies.MediaController.trackSwitchModes.ALWAYS_REPLACE
+         * (used to clear the buffered data (prior to current playback position) after track switch. Default for audio)
+         *
+         * @param type
+         * @param mode
+         * @memberof MediaPlayer#
+         */
+        setTrackSwitchModeFor: function(type, mode) {
+            mediaController.setSwitchMode(type, mode);
+        },
+
+        /**
+         * This method sets the selection mode for the initial track. This mode defines how the initial track will be selected
+         * if no initial media settings are set. If initial media settings are set this parameter will be ignored. Available options are:
+         *
+         * MediaPlayer.dependencies.MediaController.trackSelectionModes.HIGHEST_BITRATE
+         * this mode makes the player select the track with a highest bitrate. This mode is a default mode.
+         *
+         * MediaPlayer.dependencies.MediaController.trackSelectionModes.WIDEST_RANGE
+         * this mode makes the player select the track with a widest range of bitrates
+         *
+         * @param mode
+         * @memberof MediaPlayer#
+         */
+        setSelectionModeForInitialTrack: function(mode) {
+            mediaController.setSelectionModeForInitialTrack(mode);
+        },
+
+        /**
+         * This method returns the track selection mode.
+         *
+         * @returns mode
+         * @memberof MediaPlayer#
+         */
+        getSelectionModeForInitialTrack: function() {
+            return mediaController.getSelectionModeForInitialTrack();
         },
 
         /**
@@ -737,6 +959,7 @@ MediaPlayer = function (context) {
          * a single piece of content.
          *
          * @return {MediaPlayer.dependencies.ProtectionController} protection controller
+         * @memberof MediaPlayer#
          */
         createProtection: function() {
             return system.getObject("protectionController");
@@ -877,6 +1100,17 @@ MediaPlayer = function (context) {
         },
 
         /**
+         * This method serves to control captions z-index value. If 'true' is passed, the captions will have the highest z-index and be
+         * displayed on top of other html elements. Default value is 'false' (z-index is not set).
+         * @param value {Boolean}
+         */
+        displayCaptionsOnTop: function(value) {
+            var textTrackExt = system.getObject("textTrackExtensions");
+
+            textTrackExt.displayCConTop(value);
+        },
+
+        /**
          * Use this method to attach an HTML5 VideoElement for dash.js to operate upon.
          *
          * @param view An HTML5 VideoElement that has already been defined in the DOM.
@@ -897,6 +1131,19 @@ MediaPlayer = function (context) {
 
             // TODO : update
             resetAndPlay.call(this);
+        },
+
+        /**
+         * Use this method to attach an HTML5 div for dash.js to render rich TTML subtitles.
+         *
+         * @param div An unstyled div placed after the video element. It will be styled to match the video size and overlay z-order.
+         * @memberof MediaPlayer#
+         */
+        attachTTMLRenderingDiv: function (div) {
+            if (!videoModel) {
+                throw "Must call attachView with video element before you attach TTML Rendering Div";
+            }
+            videoModel.setTTMLRenderingDiv(div);
         },
 
         /**
@@ -1142,6 +1389,7 @@ MediaPlayer.events = {
     STREAM_SWITCH_COMPLETED: "streamswitchcompleted",
     STREAM_INITIALIZED: "streaminitialized",
     TEXT_TRACK_ADDED: "texttrackadded",
+    TEXT_TRACKS_ADDED: "alltexttracksadded",
     BUFFER_LOADED: "bufferloaded",
     BUFFER_EMPTY: "bufferstalled",
     ERROR: "error",

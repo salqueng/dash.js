@@ -181,8 +181,8 @@ MediaPlayer.models.MetricsModel = function () {
             return vo;
         },
 
-        addTrackSwitch: function (mediaType, t, mt, to, lto) {
-            var vo = new MediaPlayer.vo.metrics.TrackSwitch();
+        addRepresentationSwitch: function (mediaType, t, mt, to, lto) {
+            var vo = new MediaPlayer.vo.metrics.RepresentationSwitch();
 
             vo.t = t;
             vo.mt = mt;
@@ -268,6 +268,19 @@ MediaPlayer.models.MetricsModel = function () {
             return vo;
         },
 
+        addRequestsQueue: function(mediaType, pendingRequests, loadingRequests, executedRequests, rejectedRequests) {
+            var vo = new MediaPlayer.vo.metrics.RequestsQueue();
+
+            vo.pendingRequests = pendingRequests;
+            vo.loadingRequests = loadingRequests;
+            vo.executedRequests = executedRequests;
+            vo.rejectedRequests = rejectedRequests;
+
+            this.getMetricsFor(mediaType).RequestsQueue = vo;
+
+            this.metricAdded(mediaType, this.adapter.metricsList.REQUESTS_QUEUE, vo);
+        },
+
         addManifestUpdate: function(mediaType, type, requestTime, fetchTime, availabilityStartTime, presentationStartTime, clientTimeOffset, currentTime, buffered, latency) {
             var vo = new MediaPlayer.vo.metrics.ManifestUpdate(),
                 metrics = this.getMetricsFor("stream");
@@ -316,7 +329,7 @@ MediaPlayer.models.MetricsModel = function () {
             return null;
         },
 
-        addManifestUpdateTrackInfo: function(manifestUpdate, id, index, streamIndex, mediaType, presentationTimeOffset, startNumber, fragmentInfoType) {
+        addManifestUpdateRepresentationInfo: function(manifestUpdate, id, index, streamIndex, mediaType, presentationTimeOffset, startNumber, fragmentInfoType) {
             if (manifestUpdate) {
                 var vo = new MediaPlayer.vo.metrics.ManifestUpdate.TrackInfo();
 

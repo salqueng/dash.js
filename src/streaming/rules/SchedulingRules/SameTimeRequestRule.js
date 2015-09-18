@@ -160,8 +160,6 @@ MediaPlayer.rules.SameTimeRequestRule = function () {
                 pendingReqs = model.getRequests({state: MediaPlayer.dependencies.FragmentModel.states.PENDING});
                 loadingLength = model.getRequests({state: MediaPlayer.dependencies.FragmentModel.states.LOADING}).length;
 
-                if (model.getIsPostponed() && !isNaN(req.startTime)) continue;
-
                 if (loadingLength > MediaPlayer.dependencies.ScheduleController.LOADING_REQUEST_THRESHOLD) {
                     callback(new MediaPlayer.rules.SwitchRequest([], p));
                     return;
@@ -194,7 +192,7 @@ MediaPlayer.rules.SameTimeRequestRule = function () {
                 sameTimeReq = model.getRequests({state: MediaPlayer.dependencies.FragmentModel.states.LOADING, time: time})[0] ||
                     model.getRequests({state: MediaPlayer.dependencies.FragmentModel.states.EXECUTED, time: time})[0];
 
-                if (!sameTimeReq && (req.index !== getLastMediaRequestIdx.call(this, streamId, req.mediaType))) {
+                if (!sameTimeReq && (req.index !== getLastMediaRequestIdx.call(this, streamId, req.mediaType)) && type !== "fragmentedText") {
                     shouldWait = true;
                     break;
                 }

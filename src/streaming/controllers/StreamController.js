@@ -52,6 +52,9 @@
         useManifestDateHeaderTimeSource,
 
         attachEvents = function (stream) {
+            var mediaController = this.system.getObject("mediaController");
+
+            mediaController.subscribe(MediaPlayer.dependencies.MediaController.eventList.CURRENT_TRACK_CHANGED, stream);
             stream.subscribe(MediaPlayer.dependencies.Stream.eventList.ENAME_STREAM_UPDATED, this.liveEdgeFinder);
             stream.subscribe(MediaPlayer.dependencies.Stream.eventList.ENAME_STREAM_BUFFERING_COMPLETED, this);
         },
@@ -415,18 +418,25 @@
 
         onManifestUpdated = function(e) {
             if (!e.error) {
-                this.log("Manifest has loaded.");
                 //Since streams are not composed yet , need to manually look up useCalculatedLiveEdgeTime to detect if stream
                 //is SegmentTimeline to avoid using time source
                 var manifest = e.data.manifest,
                     streamInfo = this.adapter.getStreamsInfo(manifest)[0],
-                    mediaInfo  = this.adapter.getMediaInfoForType(manifest, streamInfo, "video"),
-                    adaptation = this.adapter.getDataForMedia(mediaInfo),
+                    mediaInfo = (
+                        this.adapter.getMediaInfoForType(manifest, streamInfo, "video") ||
+                        this.adapter.getMediaInfoForType(manifest, streamInfo, "audio")
+                    ),
+                    adaptation,
+                    useCalculatedLiveEdgeTime;
+
+                if (mediaInfo) {
+                    adaptation = this.adapter.getDataForMedia(mediaInfo);
                     useCalculatedLiveEdgeTime = this.manifestExt.getRepresentationsForAdaptation(manifest, adaptation)[0].useCalculatedLiveEdgeTime;
 
-                if (useCalculatedLiveEdgeTime) {
-                    this.log("SegmentTimeline detected using calculated Live Edge Time");
-                    useManifestDateHeaderTimeSource = false;
+                    if (useCalculatedLiveEdgeTime) {
+                        this.log("SegmentTimeline detected using calculated Live Edge Time");
+                        useManifestDateHeaderTimeSource = false;
+                    }
                 }
 
                 var manifestUTCTimingSources = this.manifestExt.getUTCTimingSources(e.data.manifest),
@@ -539,14 +549,18 @@
                 detachEvents.call(this, activeStream);
             }
 
+            var mediaController = this.system.getObject("mediaController"),
+                stream;
+
             this.timeSyncController.unsubscribe(MediaPlayer.dependencies.TimeSyncController.eventList.ENAME_TIME_SYNCHRONIZATION_COMPLETED, this.timelineConverter);
             this.timeSyncController.unsubscribe(MediaPlayer.dependencies.TimeSyncController.eventList.ENAME_TIME_SYNCHRONIZATION_COMPLETED, this.liveEdgeFinder);
             this.timeSyncController.unsubscribe(MediaPlayer.dependencies.TimeSyncController.eventList.ENAME_TIME_SYNCHRONIZATION_COMPLETED, this);
             this.timeSyncController.reset();
 
             for (var i = 0, ln = streams.length; i < ln; i++) {
-                var stream = streams[i];
+                stream = streams[i];
                 stream.unsubscribe(MediaPlayer.dependencies.Stream.eventList.ENAME_STREAM_UPDATED, this);
+                mediaController.unsubscribe(MediaPlayer.dependencies.MediaController.eventList.CURRENT_TRACK_CHANGED, stream);
                 stream.reset(hasMediaError);
             }
 
